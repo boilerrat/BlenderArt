@@ -1,11 +1,12 @@
 """
-Fuzzy Sphere with Hard Lighting and Deep Shadows
-===============================================
+Fuzzy Sphere with Hard Lighting and Atmospheric Effects
+======================================================
 
 This script creates a 3D sphere with a fuzzy, velvety texture using procedural materials,
-hard directional lighting, and deep shadows for dramatic effect. The script now includes a
-customizable gradient background, optional rim lighting, color variation in the fuzz, and a
-simple spin animation for more dynamic renders.
+hard directional lighting, and deep shadows for dramatic effect. It now features a
+customizable gradient background with optional noise overlay, color variation in the fuzz,
+optional rim lighting, a simple spin animation, volumetric fog, and floating glow particles
+for richer atmosphere.
 
 To run this script in Blender:
 1. Open Blender 4.x
@@ -27,6 +28,9 @@ Artistic Parameters (modify these at the top):
 - RIM_LIGHT_INTENSITY: Strength of optional rim light (0 disables)
 - ANIMATE_ROTATION: Toggle simple spin animation
 - ROTATION_FRAMES: Number of frames for full rotation when animation is enabled
+- FOG_DENSITY: Strength of volumetric fog
+- ADD_PARTICLES: Toggle floating glow particles
+- PARTICLE_COUNT: Number of glow particles when enabled
 """
 
 import bpy
@@ -63,6 +67,11 @@ COLOR_NOISE_SCALE = 2.5
 RIM_LIGHT_INTENSITY = 5.0  # Set to 0.0 to disable rim light
 ANIMATE_ROTATION = True
 ROTATION_FRAMES = 120
+
+# Atmospheric effects
+FOG_DENSITY = 0.03               # Strength of volumetric fog
+ADD_PARTICLES = True             # Toggle floating glow particles
+PARTICLE_COUNT = 150             # Number of particles around sphere
 
 # ============================================================================
 # SCENE SETUP
@@ -344,6 +353,68 @@ def create_fuzzy_material():
     return material
 
 # ============================================================================
+# ATMOSPHERIC EFFECTS
+# ============================================================================
+
+def add_volumetric_fog():
+    """Add volumetric fog using a large cube"""
+
+    bpy.ops.mesh.primitive_cube_add(size=100, location=(0, 0, 0))
+    fog = bpy.context.active_object
+    fog.name = "VolumetricFog"
+
+    fog_mat = bpy.data.materials.new(name="FogMaterial")
+    fog_mat.use_nodes = True
+    nodes = fog_mat.node_tree.nodes
+    links = fog_mat.node_tree.links
+    nodes.clear()
+
+    output = nodes.new(type='ShaderNodeOutputMaterial')
+    volume = nodes.new(type='ShaderNodeVolumeScatter')
+
+    output.location = (200, 0)
+    volume.location = (0, 0)
+
+    volume.inputs['Density'].default_value = FOG_DENSITY
+    links.new(volume.outputs['Volume'], output.inputs['Volume'])
+
+    fog.data.materials.append(fog_mat)
+
+def add_floating_particles():
+    """Scatter small glowing particles around the sphere"""
+
+    if not ADD_PARTICLES:
+        return
+
+    particle_mat = bpy.data.materials.new(name="ParticleMaterial")
+    particle_mat.use_nodes = True
+    p_nodes = particle_mat.node_tree.nodes
+    p_links = particle_mat.node_tree.links
+    p_nodes.clear()
+
+    p_output = p_nodes.new(type='ShaderNodeOutputMaterial')
+    emission = p_nodes.new(type='ShaderNodeEmission')
+
+    p_output.location = (200, 0)
+    emission.location = (0, 0)
+
+    emission.inputs['Color'].default_value = (1.0, 0.8, 0.2, 1.0)
+    emission.inputs['Strength'].default_value = 5.0
+    p_links.new(emission.outputs['Emission'], p_output.inputs['Surface'])
+
+    for _ in range(PARTICLE_COUNT):
+        bpy.ops.mesh.primitive_ico_sphere_add(
+            radius=0.05,
+            location=(
+                random.uniform(-3, 3),
+                random.uniform(-3, 3),
+                random.uniform(-3, 3),
+            ),
+        )
+        particle = bpy.context.active_object
+        particle.data.materials.append(particle_mat)
+
+# ============================================================================
 # LIGHTING SETUP
 # ============================================================================
 
@@ -515,6 +586,10 @@ def main():
     # Set up studio background using world environment
     setup_studio_background()
 
+    # Add volumetric fog and floating particles
+    add_volumetric_fog()
+    add_floating_particles()
+
     # Set up lighting
     setup_hard_lighting()
 
@@ -538,6 +613,8 @@ def main():
     print("- Try different CAMERA_ANGLE options: 'dramatic', 'low_angle', 'high_angle', 'side', 'cinematic', 'hero'")
     print("- Experiment with LIGHTING_STYLE: 'cinematic', 'studio', 'dramatic'")
     print("- Adjust BACKGROUND_COLOR_TOP/BOTTOM or BACKGROUND_NOISE_SCALE")
+    print("- Adjust FOG_DENSITY for more or less haze")
+    print("- Toggle ADD_PARTICLES to enable or disable glow particles")
     print("- Toggle ANIMATE_ROTATION for a spinning presentation")
 
 # Run the script
