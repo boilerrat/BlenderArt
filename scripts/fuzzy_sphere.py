@@ -34,8 +34,6 @@ Artistic Parameters (modify these at the top):
 """
 
 import bpy
-import bmesh
-from mathutils import Vector, Matrix
 import random
 import math
 
