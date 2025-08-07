@@ -1,9 +1,11 @@
 """
-Fuzzy Sphere with Hard Lighting and Deep Shadows
-===============================================
+Fuzzy Sphere with Hard Lighting and Atmospheric Effects
+======================================================
 
 This script creates a 3D sphere with a fuzzy, velvety texture using procedural materials,
-hard directional lighting, and deep shadows for dramatic effect.
+hard directional lighting, and deep shadows for dramatic effect. It also features a
+stylized gradient background, optional volumetric fog, and floating glow particles to
+enhance the atmosphere.
 
 To run this script in Blender:
 1. Open Blender 4.x
@@ -18,6 +20,8 @@ Artistic Parameters (modify these at the top):
 - LIGHT_INTENSITY: Brightness of the main light
 - SHADOW_SOFTNESS: How soft or hard the shadows are
 - CAMERA_DISTANCE: How far the camera is from the sphere
+- FOG_DENSITY: Strength of volumetric fog
+- ADD_PARTICLES: Toggle floating glow particles
 """
 
 import bpy
@@ -38,6 +42,12 @@ CAMERA_DISTANCE = 12.0  # Much further for full sphere visibility
 RENDER_SAMPLES = 750  # Higher quality render
 CAMERA_ANGLE = "side"  # Options: "dramatic", "low_angle", "high_angle", "side", "cinematic", "hero"
 LIGHTING_STYLE = "studio"  # Options: "cinematic", "studio", "dramatic"
+BACKGROUND_BOTTOM_COLOR = (0.05, 0.02, 0.08, 1.0)  # Darker tone at bottom
+BACKGROUND_TOP_COLOR = (0.15, 0.25, 0.35, 1.0)      # Lighter tone at top
+BACKGROUND_NOISE_SCALE = 1.5                        # Scale for subtle noise overlay
+FOG_DENSITY = 0.03                                  # Strength of volumetric fog
+ADD_PARTICLES = True                                # Toggle floating glow particles
+PARTICLE_COUNT = 150                                # Number of particles around sphere
 
 # ============================================================================
 # SCENE SETUP
@@ -218,28 +228,40 @@ def setup_studio_background():
     # Clear existing world nodes
     world_nodes.clear()
     
-    # Create gradient studio background
+    # Create gradient studio background with subtle noise
     background = world_nodes.new(type='ShaderNodeBackground')
     output = world_nodes.new(type='ShaderNodeOutputWorld')
     color_ramp = world_nodes.new(type='ShaderNodeValToRGB')
     tex_coord = world_nodes.new(type='ShaderNodeTexCoord')
+    noise_tex = world_nodes.new(type='ShaderNodeTexNoise')
+    mix = world_nodes.new(type='ShaderNodeMixRGB')
     
     # Position nodes
-    background.location = (300, 0)
-    output.location = (500, 0)
-    color_ramp.location = (-200, 0)
+    background.location = (500, 0)
+    output.location = (700, 0)
+    mix.location = (300, 0)
+    color_ramp.location = (0, 0)
+    noise_tex.location = (-200, 0)
     tex_coord.location = (-400, 0)
     
-    # Connect nodes for gradient background
+    # Connect nodes for gradient background with noise overlay
     world_links.new(tex_coord.outputs['Generated'], color_ramp.inputs['Fac'])
-    world_links.new(color_ramp.outputs['Color'], background.inputs['Color'])
+    world_links.new(tex_coord.outputs['Generated'], noise_tex.inputs['Vector'])
+    world_links.new(color_ramp.outputs['Color'], mix.inputs[1])
+    world_links.new(noise_tex.outputs['Color'], mix.inputs[2])
+    world_links.new(mix.outputs['Color'], background.inputs['Color'])
     world_links.new(background.outputs['Background'], output.inputs['Surface'])
     
-    # Set up gradient for dramatic studio look
+    # Set up gradient colors
     color_ramp.color_ramp.elements[0].position = 0.0
-    color_ramp.color_ramp.elements[0].color = (0.05, 0.02, 0.08, 1.0)  # Deep purple at bottom
+    color_ramp.color_ramp.elements[0].color = BACKGROUND_BOTTOM_COLOR
     color_ramp.color_ramp.elements[1].position = 1.0
-    color_ramp.color_ramp.elements[1].color = (0.15, 0.25, 0.35, 1.0)  # Blue-gray at top
+    color_ramp.color_ramp.elements[1].color = BACKGROUND_TOP_COLOR
+
+    # Configure noise overlay for subtle variation
+    noise_tex.inputs['Scale'].default_value = BACKGROUND_NOISE_SCALE
+    mix.blend_type = 'ADD'
+    mix.inputs['Fac'].default_value = 0.05
     
     # Set background strength
     background.inputs['Strength'].default_value = 1.0
@@ -298,8 +320,70 @@ def create_fuzzy_material():
     noise_tex.inputs['Scale'].default_value = 80.0  # More detailed texture
     noise_tex.inputs['Detail'].default_value = 12.0  # More detail levels
     noise_tex.inputs['Roughness'].default_value = 0.9  # More variation
-    
+
     return material
+
+# ============================================================================
+# ATMOSPHERIC EFFECTS
+# ============================================================================
+
+def add_volumetric_fog():
+    """Add volumetric fog using a large cube"""
+
+    bpy.ops.mesh.primitive_cube_add(size=100, location=(0, 0, 0))
+    fog = bpy.context.active_object
+    fog.name = "VolumetricFog"
+
+    fog_mat = bpy.data.materials.new(name="FogMaterial")
+    fog_mat.use_nodes = True
+    nodes = fog_mat.node_tree.nodes
+    links = fog_mat.node_tree.links
+    nodes.clear()
+
+    output = nodes.new(type='ShaderNodeOutputMaterial')
+    volume = nodes.new(type='ShaderNodeVolumeScatter')
+
+    output.location = (200, 0)
+    volume.location = (0, 0)
+
+    volume.inputs['Density'].default_value = FOG_DENSITY
+    links.new(volume.outputs['Volume'], output.inputs['Volume'])
+
+    fog.data.materials.append(fog_mat)
+
+def add_floating_particles():
+    """Scatter small glowing particles around the sphere"""
+
+    if not ADD_PARTICLES:
+        return
+
+    particle_mat = bpy.data.materials.new(name="ParticleMaterial")
+    particle_mat.use_nodes = True
+    p_nodes = particle_mat.node_tree.nodes
+    p_links = particle_mat.node_tree.links
+    p_nodes.clear()
+
+    p_output = p_nodes.new(type='ShaderNodeOutputMaterial')
+    emission = p_nodes.new(type='ShaderNodeEmission')
+
+    p_output.location = (200, 0)
+    emission.location = (0, 0)
+
+    emission.inputs['Color'].default_value = (1.0, 0.8, 0.2, 1.0)
+    emission.inputs['Strength'].default_value = 5.0
+    p_links.new(emission.outputs['Emission'], p_output.inputs['Surface'])
+
+    for _ in range(PARTICLE_COUNT):
+        bpy.ops.mesh.primitive_ico_sphere_add(
+            radius=0.05,
+            location=(
+                random.uniform(-3, 3),
+                random.uniform(-3, 3),
+                random.uniform(-3, 3),
+            ),
+        )
+        particle = bpy.context.active_object
+        particle.data.materials.append(particle_mat)
 
 # ============================================================================
 # LIGHTING SETUP
@@ -443,7 +527,11 @@ def main():
     
     # Set up studio background using world environment
     setup_studio_background()
-    
+
+    # Add volumetric fog and floating particles
+    add_volumetric_fog()
+    add_floating_particles()
+
     # Set up lighting
     setup_hard_lighting()
     
@@ -463,6 +551,8 @@ def main():
     print("- Try different CAMERA_ANGLE options: 'dramatic', 'low_angle', 'high_angle', 'side', 'cinematic', 'hero'")
     print("- Experiment with LIGHTING_STYLE: 'cinematic', 'studio', 'dramatic'")
     print("- Adjust CAMERA_DISTANCE for closer/farther views")
+    print("- Adjust FOG_DENSITY for more or less atmospheric haze")
+    print("- Toggle ADD_PARTICLES to enable or disable floating glow particles")
 
 # Run the script
 if __name__ == "__main__":
