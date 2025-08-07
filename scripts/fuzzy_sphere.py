@@ -63,6 +63,8 @@ FOG_DENSITY = 0.03               # Strength of volumetric fog
 ADD_PARTICLES = True             # Toggle floating glow particles
 PARTICLE_COUNT = 150             # Number of particles around sphere
 
+
+
 # ============================================================================
 # SCENE SETUP
 # ============================================================================
@@ -292,6 +294,8 @@ def add_volumetric_fog():
     volume.inputs['Density'].default_value = FOG_DENSITY
     links.new(volume.outputs['Volume'], output.inputs['Volume'])
     fog.data.materials.append(fog_mat)
+
+
 
 def add_floating_particles():
     """Scatter small glowing particles around the sphere"""
