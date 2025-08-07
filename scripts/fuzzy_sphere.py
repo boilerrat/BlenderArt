@@ -3,7 +3,9 @@ Fuzzy Sphere with Hard Lighting and Deep Shadows
 ===============================================
 
 This script creates a 3D sphere with a fuzzy, velvety texture using procedural materials,
-hard directional lighting, and deep shadows for dramatic effect.
+hard directional lighting, and deep shadows for dramatic effect. The script now includes a
+customizable gradient background, optional rim lighting, color variation in the fuzz, and a
+simple spin animation for more dynamic renders.
 
 To run this script in Blender:
 1. Open Blender 4.x
@@ -18,12 +20,20 @@ Artistic Parameters (modify these at the top):
 - LIGHT_INTENSITY: Brightness of the main light
 - SHADOW_SOFTNESS: How soft or hard the shadows are
 - CAMERA_DISTANCE: How far the camera is from the sphere
+- BACKGROUND_COLOR_BOTTOM / BACKGROUND_COLOR_TOP: Gradient world background colors
+- BACKGROUND_NOISE_SCALE: Scale of noise overlay in the background
+- FUZZ_COLOR_1 / FUZZ_COLOR_2: Two colors mixed across the fuzz
+- COLOR_NOISE_SCALE: Controls scale of color variation
+- RIM_LIGHT_INTENSITY: Strength of optional rim light (0 disables)
+- ANIMATE_ROTATION: Toggle simple spin animation
+- ROTATION_FRAMES: Number of frames for full rotation when animation is enabled
 """
 
 import bpy
 import bmesh
 from mathutils import Vector, Matrix
 import random
+import math
 
 # ============================================================================
 # ARTISTIC PARAMETERS - Modify these for different effects
@@ -32,12 +42,27 @@ import random
 SPHERE_RADIUS = 2.0
 FUZZ_DENSITY = 2.0  # Maximum fuzziness
 FUZZ_LENGTH = 0.5   # Longer fuzzy fibers for more dramatic effect
-LIGHT_INTENSITY = 15.0  # Much brighter to make sphere visible
-SHADOW_SOFTNESS = 0.07  # Even harder shadows for more drama
-CAMERA_DISTANCE = 12.0  # Much further for full sphere visibility
+LIGHT_INTENSITY = 15.0  # Brightness of main light
+SHADOW_SOFTNESS = 0.07  # Harder shadows for more drama
+CAMERA_DISTANCE = 12.0  # Camera distance from sphere
 RENDER_SAMPLES = 750  # Higher quality render
 CAMERA_ANGLE = "side"  # Options: "dramatic", "low_angle", "high_angle", "side", "cinematic", "hero"
 LIGHTING_STYLE = "studio"  # Options: "cinematic", "studio", "dramatic"
+
+# Background gradient and noise
+BACKGROUND_COLOR_BOTTOM = (0.05, 0.02, 0.08, 1.0)
+BACKGROUND_COLOR_TOP = (0.15, 0.25, 0.35, 1.0)
+BACKGROUND_NOISE_SCALE = 5.0  # 0 disables noise overlay
+
+# Fuzz color variation
+FUZZ_COLOR_1 = (0.9, 0.3, 0.2, 1.0)
+FUZZ_COLOR_2 = (0.2, 0.3, 0.9, 1.0)
+COLOR_NOISE_SCALE = 2.5
+
+# Extra lighting and animation options
+RIM_LIGHT_INTENSITY = 5.0  # Set to 0.0 to disable rim light
+ANIMATE_ROTATION = True
+ROTATION_FRAMES = 120
 
 # ============================================================================
 # SCENE SETUP
@@ -218,29 +243,41 @@ def setup_studio_background():
     # Clear existing world nodes
     world_nodes.clear()
     
-    # Create gradient studio background
+    # Create nodes for gradient background with subtle noise overlay
     background = world_nodes.new(type='ShaderNodeBackground')
     output = world_nodes.new(type='ShaderNodeOutputWorld')
     color_ramp = world_nodes.new(type='ShaderNodeValToRGB')
     tex_coord = world_nodes.new(type='ShaderNodeTexCoord')
-    
+    noise = world_nodes.new(type='ShaderNodeTexNoise')
+    mix = world_nodes.new(type='ShaderNodeMixRGB')
+
     # Position nodes
-    background.location = (300, 0)
-    output.location = (500, 0)
-    color_ramp.location = (-200, 0)
-    tex_coord.location = (-400, 0)
-    
-    # Connect nodes for gradient background
+    background.location = (600, 0)
+    output.location = (800, 0)
+    mix.location = (400, 0)
+    color_ramp.location = (200, 0)
+    noise.location = (0, -200)
+    tex_coord.location = (-200, 0)
+
+    # Connect nodes for gradient background with noise
     world_links.new(tex_coord.outputs['Generated'], color_ramp.inputs['Fac'])
-    world_links.new(color_ramp.outputs['Color'], background.inputs['Color'])
+    world_links.new(tex_coord.outputs['Generated'], noise.inputs['Vector'])
+    world_links.new(color_ramp.outputs['Color'], mix.inputs[1])
+    world_links.new(noise.outputs['Color'], mix.inputs[2])
+    world_links.new(mix.outputs['Color'], background.inputs['Color'])
     world_links.new(background.outputs['Background'], output.inputs['Surface'])
-    
-    # Set up gradient for dramatic studio look
+
+    # Set up gradient colors
     color_ramp.color_ramp.elements[0].position = 0.0
-    color_ramp.color_ramp.elements[0].color = (0.05, 0.02, 0.08, 1.0)  # Deep purple at bottom
+    color_ramp.color_ramp.elements[0].color = BACKGROUND_COLOR_BOTTOM
     color_ramp.color_ramp.elements[1].position = 1.0
-    color_ramp.color_ramp.elements[1].color = (0.15, 0.25, 0.35, 1.0)  # Blue-gray at top
-    
+    color_ramp.color_ramp.elements[1].color = BACKGROUND_COLOR_TOP
+
+    # Configure background noise mix
+    noise.inputs['Scale'].default_value = BACKGROUND_NOISE_SCALE
+    mix.blend_type = 'MIX'
+    mix.inputs['Fac'].default_value = 0.1 if BACKGROUND_NOISE_SCALE > 0 else 0.0
+
     # Set background strength
     background.inputs['Strength'].default_value = 1.0
     
@@ -261,44 +298,49 @@ def create_fuzzy_material():
     
     # Clear default nodes
     nodes.clear()
-    
+
     # Create nodes
     output = nodes.new(type='ShaderNodeOutputMaterial')
     principled = nodes.new(type='ShaderNodeBsdfPrincipled')
-    
+    color_noise = nodes.new(type='ShaderNodeTexNoise')
+    color_ramp = nodes.new(type='ShaderNodeValToRGB')
+    bump = nodes.new(type='ShaderNodeBump')
+    bump_noise = nodes.new(type='ShaderNodeTexNoise')
+
     # Position nodes
-    output.location = (300, 0)
-    principled.location = (0, 0)
-    
+    output.location = (600, 0)
+    principled.location = (300, 0)
+    color_ramp.location = (100, 150)
+    color_noise.location = (-100, 150)
+    bump.location = (100, -200)
+    bump_noise.location = (-100, -200)
+
     # Connect nodes
     links.new(principled.outputs['BSDF'], output.inputs['Surface'])
-    
+    links.new(color_noise.outputs['Fac'], color_ramp.inputs['Fac'])
+    links.new(color_ramp.outputs['Color'], principled.inputs['Base Color'])
+    links.new(bump_noise.outputs['Color'], bump.inputs['Height'])
+    links.new(bump.outputs['Normal'], principled.inputs['Normal'])
+
+    # Configure color variation
+    color_noise.inputs['Scale'].default_value = COLOR_NOISE_SCALE
+    color_ramp.color_ramp.elements[0].color = FUZZ_COLOR_1
+    color_ramp.color_ramp.elements[1].color = FUZZ_COLOR_2
+
     # Set up fuzzy material properties
-    principled.inputs['Base Color'].default_value = (0.9, 0.3, 0.2, 1.0)  # Vibrant coral/red
     principled.inputs['Roughness'].default_value = 0.95  # Maximum roughness for ultra-fuzzy look
     principled.inputs['Specular IOR Level'].default_value = 0.05   # Very low specular
     principled.inputs['Metallic'].default_value = 0.0   # Non-metallic
-    
+
     # Add subsurface scattering for soft, fuzzy appearance
     principled.inputs['Subsurface Weight'].default_value = 0.4
     principled.inputs['Subsurface Radius'].default_value = (1.0, 0.4, 0.3)
-    
-    # Add bump mapping for additional texture
-    bump = nodes.new(type='ShaderNodeBump')
-    noise_tex = nodes.new(type='ShaderNodeTexNoise')
-    
-    bump.location = (-200, -200)
-    noise_tex.location = (-400, -200)
-    
-    # Connect bump mapping
-    links.new(noise_tex.outputs['Color'], bump.inputs['Height'])
-    links.new(bump.outputs['Normal'], principled.inputs['Normal'])
-    
-    # Set noise texture properties for more fuzzy appearance
-    noise_tex.inputs['Scale'].default_value = 80.0  # More detailed texture
-    noise_tex.inputs['Detail'].default_value = 12.0  # More detail levels
-    noise_tex.inputs['Roughness'].default_value = 0.9  # More variation
-    
+
+    # Configure bump mapping for additional texture
+    bump_noise.inputs['Scale'].default_value = 80.0  # More detailed texture
+    bump_noise.inputs['Detail'].default_value = 12.0  # More detail levels
+    bump_noise.inputs['Roughness'].default_value = 0.9  # More variation
+
     return material
 
 # ============================================================================
@@ -381,13 +423,24 @@ def setup_hard_lighting():
         light_data.angle = SHADOW_SOFTNESS
         light_data.use_shadow = True
         light_data.shadow_soft_size = SHADOW_SOFTNESS
-        
+
         light_obj = bpy.data.objects.new(name="DramaticLight", object_data=light_data)
         bpy.context.scene.collection.objects.link(light_obj)
-        
+
         light_obj.location = (10, -5, 12)
         light_obj.rotation_euler = (0.5, 0.5, -0.2)
-    
+
+    # Optional extra rim light for added edge glow
+    if RIM_LIGHT_INTENSITY > 0:
+        rim_data = bpy.data.lights.new(name="ExtraRimLight", type='SPOT')
+        rim_data.energy = RIM_LIGHT_INTENSITY
+        rim_data.spot_size = 1.2
+        rim_data.spot_blend = 0.8
+        rim_obj = bpy.data.objects.new(name="ExtraRimLight", object_data=rim_data)
+        bpy.context.scene.collection.objects.link(rim_obj)
+        rim_obj.location = (-3, 1, 4)
+        rim_obj.rotation_euler = (0.6, -0.1, 2.5)
+
     # Note: World background is now handled by setup_studio_background()
     # This ensures proper studio lighting without physical background objects
 
@@ -417,6 +470,24 @@ def setup_render_settings():
     scene.view_settings.look = 'High Contrast'
 
 # ============================================================================
+# ANIMATION
+# ============================================================================
+
+def add_spin_animation(obj, frames=120):
+    """Add a simple spin animation around the Z axis."""
+    obj.animation_data_clear()
+    obj.rotation_euler = (0.0, 0.0, 0.0)
+    obj.keyframe_insert(data_path="rotation_euler", frame=1)
+    obj.rotation_euler[2] = math.radians(360)
+    obj.keyframe_insert(data_path="rotation_euler", frame=frames)
+
+    # Ensure linear interpolation for smooth continuous rotation
+    if obj.animation_data and obj.animation_data.action:
+        for fcurve in obj.animation_data.action.fcurves:
+            for kf in fcurve.keyframe_points:
+                kf.interpolation = 'LINEAR'
+
+# ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
@@ -429,7 +500,7 @@ def main():
     clear_scene()
     
     # Set up scene with camera tracking
-    target_empty = setup_scene()
+    setup_scene()
     
     # Create fuzzy sphere
     sphere = create_fuzzy_sphere()
@@ -443,13 +514,17 @@ def main():
     
     # Set up studio background using world environment
     setup_studio_background()
-    
+
     # Set up lighting
     setup_hard_lighting()
-    
+
     # Configure render settings
     setup_render_settings()
-    
+
+    # Optional spin animation for the sphere
+    if ANIMATE_ROTATION:
+        add_spin_animation(sphere, ROTATION_FRAMES)
+
     # Select the sphere for easy manipulation
     bpy.context.view_layer.objects.active = sphere
     sphere.select_set(True)
@@ -459,10 +534,11 @@ def main():
     print("- Try adjusting FUZZ_DENSITY for different fuzzy levels")
     print("- Modify LIGHT_INTENSITY for more/less dramatic lighting")
     print("- Change SPHERE_RADIUS for different sphere sizes")
-    print("- Experiment with different Base Color values in the material")
+    print("- Play with FUZZ_COLOR_1 and FUZZ_COLOR_2 for varied hues")
     print("- Try different CAMERA_ANGLE options: 'dramatic', 'low_angle', 'high_angle', 'side', 'cinematic', 'hero'")
     print("- Experiment with LIGHTING_STYLE: 'cinematic', 'studio', 'dramatic'")
-    print("- Adjust CAMERA_DISTANCE for closer/farther views")
+    print("- Adjust BACKGROUND_COLOR_TOP/BOTTOM or BACKGROUND_NOISE_SCALE")
+    print("- Toggle ANIMATE_ROTATION for a spinning presentation")
 
 # Run the script
 if __name__ == "__main__":
