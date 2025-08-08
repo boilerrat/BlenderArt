@@ -41,27 +41,27 @@ import math
 # ARTISTIC PARAMETERS - Modify these for different effects
 # ============================================================================
 
-SPHERE_RADIUS = 2.0
-FUZZ_DENSITY = 2.0  # Maximum fuzziness
-FUZZ_LENGTH = 0.5   # Longer fuzzy fibers for more dramatic effect
+SPHERE_RADIUS = 1.75
+FUZZ_DENSITY = 2.5  # Maximum fuzziness
+FUZZ_LENGTH = 0.75   # Longer fuzzy fibers for more dramatic effect
 LIGHT_INTENSITY = 15.0  # Brightness of main light
-SHADOW_SOFTNESS = 0.10  # Harder shadows for more drama
+SHADOW_SOFTNESS = 0.15  # Harder shadows for more drama
 CAMERA_DISTANCE = 12.0  # Camera distance from sphere
-RENDER_SAMPLES = 750  # Higher quality render
+RENDER_SAMPLES = 3000  # Higher quality render
 CAMERA_ANGLE = "side"  # Options: "dramatic", "low_angle", "high_angle", "side", "cinematic", "hero"
 LIGHTING_STYLE = "studio"  # Options: "cinematic", "studio", "dramatic"
 BACKGROUND_COLOR_BOTTOM = (0.05, 0.02, 0.08, 1.0)  # Darker tone at bottom
 BACKGROUND_COLOR_TOP = (0.15, 0.25, 0.35, 1.0)     # Lighter tone at top
 BACKGROUND_NOISE_SCALE = 5.0                       # 0 disables noise overlay
-FUZZ_COLOR_1 = (0.9, 0.3, 0.2, 1.0)
-FUZZ_COLOR_2 = (0.2, 0.3, 0.9, 1.0)
-COLOR_NOISE_SCALE = 2.5
-RIM_LIGHT_INTENSITY = 5.0  # Set to 0.0 to disable rim light
+FUZZ_COLOR_1 = (0.9, 0.4, 0.2, 1.0)
+FUZZ_COLOR_2 = (0.2, 0.3, 0.8, 1.0)
+COLOR_NOISE_SCALE = 3.5
+RIM_LIGHT_INTENSITY = 6.0  # Set to 0.0 to disable rim light
 ANIMATE_ROTATION = True
 ROTATION_FRAMES = 120
-FOG_DENSITY = 0.03               # Strength of volumetric fog
-ADD_PARTICLES = True             # Toggle floating glow particles
-PARTICLE_COUNT = 150             # Number of particles around sphere
+FOG_DENSITY = 0.01               # Strength of volumetric fog
+ADD_PARTICLES = False            # Toggle floating glow particles
+PARTICLE_COUNT = 0           # Number of particles around sphere
 
 
 
@@ -409,7 +409,7 @@ def setup_render_settings():
     """Configure render settings for dramatic effect"""
     scene = bpy.context.scene
     render = scene.render
-    render.resolution_x = 1920
+    render.resolution_x = 1080
     render.resolution_y = 1080
     render.resolution_percentage = 100
 
