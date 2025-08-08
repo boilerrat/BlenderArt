@@ -22,7 +22,7 @@ from mathutils import Vector, Matrix
 # Scene setup
 SCENE_NAME = "Studio_Geometric_Shapes"
 RENDER_ENGINE = 'CYCLES'  # 'CYCLES' or 'EEVEE'
-RENDER_SAMPLES = 1000  # Higher for better quality
+RENDER_SAMPLES = 1200  # Higher for better quality
 
 # Shape parameters
 SHAPE_SCALE = 1.5
@@ -34,6 +34,13 @@ CUBE_COLOR = (0.8, 0.2, 0.3, 1.0)  # Deep red
 TETRAHEDRON_COLOR = (0.2, 0.6, 0.8, 1.0)  # Electric blue
 SPHERE_COLOR = (0.3, 0.8, 0.4, 1.0)  # Emerald green
 
+# Sphere shading parameters
+SPHERE_SHADE_SMOOTH = True
+SPHERE_AUTO_SMOOTH = False
+SPHERE_AUTO_SMOOTH_ANGLE_DEG = 60.0
+SPHERE_SUBSURF_LEVELS = 0  # set > 0 for extra roundness
+SPHERE_SUBSURF_RENDER_LEVELS = None  # None -> same as viewport levels
+
 # Lighting parameters
 KEY_LIGHT_INTENSITY = 1500
 FILL_LIGHT_INTENSITY = 800
@@ -44,6 +51,49 @@ BACK_LIGHT_INTENSITY = 600
 CAMERA_DISTANCE = 12
 CAMERA_HEIGHT = 3
 CAMERA_ANGLE = 15  # degrees
+CAMERA_ELEVATION_BOOST = 1.0  # extra Z offset for a slightly higher angle
+
+# Camera choices (enable/disable, lens, fstop, position multipliers)
+# Location = (CAMERA_DISTANCE * x_mul, CAMERA_DISTANCE * y_mul, CAMERA_HEIGHT * z_mul + CAMERA_ELEVATION_BOOST)
+CAMERA_MAIN = {
+    "enabled": True,
+    "name": "Studio_Camera_Main",
+    "lens": 50,
+    "fstop": 2.8,
+    "mult": (1.0, -1.0, 1.0),
+}
+
+CAMERA_WIDE = {
+    "enabled": True,
+    "name": "Studio_Camera_Wide",
+    "lens": 28,
+    "fstop": 4.0,
+    "mult": (1.6, -1.2, 0.4),
+}
+
+CAMERA_CLOSE = {
+    "enabled": True,
+    "name": "Studio_Camera_Close",
+    "lens": 85,
+    "fstop": 1.8,
+    "mult": (0.75, -0.5, 0.9),
+}
+
+CAMERA_TOP = {
+    "enabled": True,
+    "name": "Studio_Camera_Top",
+    "lens": 50,
+    "fstop": 4.0,
+    "mult": (0.0, -1.2, 1.2),
+}
+
+# Which camera to make active by default: one of {"main", "wide", "close", "top"}
+ACTIVE_CAMERA = "main"
+
+# Tracking options
+CAMERA_USE_TRACKING = True
+# One of {"tetrahedron", "cube", "sphere", "origin"}
+CAMERA_TRACK_TARGET = "tetrahedron"
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -57,6 +107,31 @@ def clear_scene():
     # Clear materials
     for material in bpy.data.materials:
         bpy.data.materials.remove(material)
+
+def _set_node_input_if_exists(node: bpy.types.Node, candidate_names, value) -> bool:
+    """Safely set a node input by trying multiple possible socket names.
+
+    Returns True if set, False otherwise. Handles Blender 4.x Principled BSDF
+    input renames (e.g., Transmission -> Transmission Weight, Subsurface -> Subsurface Weight).
+    """
+    if isinstance(candidate_names, str):
+        candidate_names = [candidate_names]
+
+    for name in candidate_names:
+        sock = node.inputs.get(name)
+        if sock is not None:
+            try:
+                sock.default_value = value
+                return True
+            except Exception:
+                # Some sockets reject unexpected value types; try to coerce simple scalars
+                try:
+                    if hasattr(sock, "default_value"):
+                        sock.default_value = float(value)
+                        return True
+                except Exception:
+                    pass
+    return False
 
 def create_tetrahedron():
     """Create a tetrahedron mesh"""
@@ -93,6 +168,24 @@ def create_tetrahedron():
     obj = bpy.data.objects.new("Tetrahedron", mesh)
     bpy.context.collection.objects.link(obj)
     return obj
+
+
+def set_object_shade_smooth(obj: bpy.types.Object, use_auto_smooth: bool = False, auto_smooth_angle_deg: float = 60.0) -> None:
+    """Set smooth shading on a mesh object without using bpy.ops.
+
+    Optionally enable auto-smooth with a given angle.
+    """
+    if not obj or obj.type != 'MESH':
+        return
+    mesh = obj.data
+    # Mark all polygons smooth
+    for poly in mesh.polygons:
+        poly.use_smooth = True
+    # Auto smooth (property was removed in Blender 4.x; guard its usage)
+    if use_auto_smooth and hasattr(mesh, 'use_auto_smooth'):
+        mesh.use_auto_smooth = True
+        if hasattr(mesh, 'auto_smooth_angle'):
+            mesh.auto_smooth_angle = math.radians(float(auto_smooth_angle_deg))
 
 def create_metallic_material(name, base_color, metallic=1.0, roughness=0.1):
     """Create a metallic material with PBR properties"""
@@ -133,11 +226,12 @@ def create_crystalline_material(name, base_color):
     # Create principled BSDF
     principled = nodes.new('ShaderNodeBsdfPrincipled')
     principled.location = (0, 0)
-    principled.inputs['Base Color'].default_value = base_color
-    principled.inputs['Transmission'].default_value = 0.8
-    principled.inputs['IOR'].default_value = 1.45
-    principled.inputs['Roughness'].default_value = 0.0
-    principled.inputs['Alpha'].default_value = 0.9
+    _set_node_input_if_exists(principled, 'Base Color', base_color)
+    # Transmission naming changed in Blender 4.x
+    _set_node_input_if_exists(principled, ['Transmission', 'Transmission Weight'], 0.8)
+    _set_node_input_if_exists(principled, 'IOR', 1.45)
+    _set_node_input_if_exists(principled, 'Roughness', 0.0)
+    _set_node_input_if_exists(principled, 'Alpha', 0.9)
     
     # Enable alpha blending
     material.blend_method = 'BLEND'
@@ -164,10 +258,11 @@ def create_organic_material(name, base_color):
     # Create principled BSDF
     principled = nodes.new('ShaderNodeBsdfPrincipled')
     principled.location = (0, 0)
-    principled.inputs['Base Color'].default_value = base_color
-    principled.inputs['Subsurface'].default_value = 0.1
-    principled.inputs['Subsurface Color'].default_value = (0.8, 0.9, 0.7, 1.0)
-    principled.inputs['Roughness'].default_value = 0.3
+    _set_node_input_if_exists(principled, 'Base Color', base_color)
+    # Subsurface naming changed in Blender 4.x
+    _set_node_input_if_exists(principled, ['Subsurface', 'Subsurface Weight'], 0.1)
+    _set_node_input_if_exists(principled, ['Subsurface Color', 'Subsurface Albedo'], (0.8, 0.9, 0.7, 1.0))
+    _set_node_input_if_exists(principled, 'Roughness', 0.3)
     
     # Create material output
     material_output = nodes.new('ShaderNodeOutputMaterial')
@@ -224,19 +319,28 @@ def setup_studio_lighting():
     back_light_obj.location = (0, -8, 3)
     back_light_obj.rotation_euler = (math.radians(15), 0, 0)
 
-def _ensure_camera_target():
-    """Create or reuse a camera target Empty at the origin."""
+def _ensure_camera_target_on_object(target_obj: bpy.types.Object) -> bpy.types.Object:
+    """Create or reuse a camera target Empty parented to target_obj's origin.
+
+    Ensures the empty sits at the center of the given object so cameras can track it.
+    """
     name = "Studio_Camera_Target"
-    target = bpy.data.objects.get(name)
-    if target is None:
-        target = bpy.data.objects.new(name, None)
-        target.empty_display_type = 'PLAIN_AXES'
-        target.location = (0.0, 0.0, 0.0)
-        bpy.context.collection.objects.link(target)
-    return target
+    target_empty = bpy.data.objects.get(name)
+    if target_empty is None:
+        target_empty = bpy.data.objects.new(name, None)
+        target_empty.empty_display_type = 'PLAIN_AXES'
+        bpy.context.collection.objects.link(target_empty)
+
+    # Parent to the target object so it always remains at its origin
+    if target_empty.parent != target_obj:
+        target_empty.parent = target_obj
+        target_empty.matrix_parent_inverse = target_obj.matrix_world.inverted()
+        target_empty.location = (0.0, 0.0, 0.0)
+
+    return target_empty
 
 
-def _add_camera(name, location, lens=50, fstop=2.8):
+def _add_camera(name, location, lens=50, fstop=2.8, target_obj: bpy.types.Object | None = None):
     """Create a camera, position it, add a Track To constraint, and tune DOF."""
     cam_data = bpy.data.cameras.new(name=name)
     cam_obj = bpy.data.objects.new(name, cam_data)
@@ -244,35 +348,78 @@ def _add_camera(name, location, lens=50, fstop=2.8):
 
     # Place camera and aim at the target
     cam_obj.location = location
-    target = _ensure_camera_target()
-    track = cam_obj.constraints.new(type='TRACK_TO')
-    track.target = target
-    track.track_axis = 'TRACK_NEGATIVE_Z'
-    track.up_axis = 'UP_Y'
+    if CAMERA_USE_TRACKING:
+        if target_obj is not None:
+            target = _ensure_camera_target_on_object(target_obj)
+        else:
+            # fall back to a world-origin empty if no target obj
+            world_origin = bpy.data.objects.get("Studio_Camera_World_Origin")
+            if world_origin is None:
+                world_origin = bpy.data.objects.new("Studio_Camera_World_Origin", None)
+                world_origin.empty_display_type = 'PLAIN_AXES'
+                world_origin.location = (0.0, 0.0, 0.0)
+                bpy.context.collection.objects.link(world_origin)
+            target = world_origin
+        track = cam_obj.constraints.new(type='TRACK_TO')
+        track.target = target
+        track.track_axis = 'TRACK_NEGATIVE_Z'
+        track.up_axis = 'UP_Y'
 
     # Camera settings
     cam_data.lens = lens
     cam_data.dof.use_dof = True
     cam_data.dof.aperture_fstop = fstop
-    # Focus roughly on the origin based on distance
-    cam_data.dof.focus_distance = (Vector(location) - Vector((0.0, 0.0, 0.0))).length
+    # Focus on the target (fallback to origin if none)
+    if CAMERA_USE_TRACKING and target_obj is not None:
+        target_world = target_obj.matrix_world.translation
+        cam_data.dof.focus_distance = (Vector(location) - target_world).length
+    else:
+        cam_data.dof.focus_distance = (Vector(location) - Vector((0.0, 0.0, 0.0))).length
 
     return cam_obj
 
 
-def setup_cameras():
-    """Add multiple dramatic cameras and set the main as active."""
-    main_loc = (CAMERA_DISTANCE, -CAMERA_DISTANCE, CAMERA_HEIGHT)
-    wide_loc = (CAMERA_DISTANCE * 1.6, -CAMERA_DISTANCE * 1.2, CAMERA_HEIGHT * 0.4)
-    close_loc = (CAMERA_DISTANCE * 0.75, -CAMERA_DISTANCE * 0.5, CAMERA_HEIGHT * 0.9)
-    top_loc = (0.0, -CAMERA_DISTANCE * 1.2, CAMERA_DISTANCE * 1.2)
+def _camera_location_from_mult(mult: tuple[float, float, float]) -> tuple[float, float, float]:
+    x = CAMERA_DISTANCE * mult[0]
+    y = CAMERA_DISTANCE * mult[1]
+    z = CAMERA_HEIGHT * mult[2] + CAMERA_ELEVATION_BOOST
+    return (x, y, z)
 
-    cam_main = _add_camera("Studio_Camera_Main", main_loc, lens=50, fstop=2.8)
-    _add_camera("Studio_Camera_Wide", wide_loc, lens=28, fstop=4.0)
-    _add_camera("Studio_Camera_Close", close_loc, lens=85, fstop=1.8)
-    _add_camera("Studio_Camera_Top", top_loc, lens=50, fstop=4.0)
 
-    bpy.context.scene.camera = cam_main
+def setup_cameras(targets: dict[str, bpy.types.Object]):
+    """Add multiple dramatic cameras using parameterized choices and set the active one.
+
+    targets: mapping for selectable targets, e.g., {"tetrahedron": obj, "cube": obj, "sphere": obj}
+    """
+    if CAMERA_TRACK_TARGET in targets:
+        target_obj = targets[CAMERA_TRACK_TARGET]
+    else:
+        target_obj = None
+
+    created = {}
+
+    if CAMERA_MAIN["enabled"]:
+        loc = _camera_location_from_mult(CAMERA_MAIN["mult"])
+        created["main"] = _add_camera(CAMERA_MAIN["name"], loc, lens=CAMERA_MAIN["lens"], fstop=CAMERA_MAIN["fstop"], target_obj=target_obj)
+
+    if CAMERA_WIDE["enabled"]:
+        loc = _camera_location_from_mult(CAMERA_WIDE["mult"])
+        created["wide"] = _add_camera(CAMERA_WIDE["name"], loc, lens=CAMERA_WIDE["lens"], fstop=CAMERA_WIDE["fstop"], target_obj=target_obj)
+
+    if CAMERA_CLOSE["enabled"]:
+        loc = _camera_location_from_mult(CAMERA_CLOSE["mult"])
+        created["close"] = _add_camera(CAMERA_CLOSE["name"], loc, lens=CAMERA_CLOSE["lens"], fstop=CAMERA_CLOSE["fstop"], target_obj=target_obj)
+
+    if CAMERA_TOP["enabled"]:
+        loc = _camera_location_from_mult(CAMERA_TOP["mult"])
+        created["top"] = _add_camera(CAMERA_TOP["name"], loc, lens=CAMERA_TOP["lens"], fstop=CAMERA_TOP["fstop"], target_obj=target_obj)
+
+    # Set active camera based on parameter (fallback to any created)
+    active = created.get(ACTIVE_CAMERA)
+    if active is None and created:
+        active = next(iter(created.values()))
+    if active is not None:
+        bpy.context.scene.camera = active
 
 def create_floor():
     """Create a reflective floor"""
@@ -381,6 +528,14 @@ def create_studio_geometric_shapes():
     sphere.name = "Studio_Sphere"
     sphere.scale = (SHAPE_SCALE, SHAPE_SCALE, SHAPE_SCALE)
     
+    # Smooth shading and optional subsurf for sphere
+    if SPHERE_SHADE_SMOOTH:
+        set_object_shade_smooth(sphere, use_auto_smooth=SPHERE_AUTO_SMOOTH, auto_smooth_angle_deg=SPHERE_AUTO_SMOOTH_ANGLE_DEG)
+    if isinstance(SPHERE_SUBSURF_LEVELS, int) and SPHERE_SUBSURF_LEVELS > 0:
+        subsurf = sphere.modifiers.new(name="Sphere_Subsurf", type='SUBSURF')
+        subsurf.levels = SPHERE_SUBSURF_LEVELS
+        subsurf.render_levels = SPHERE_SUBSURF_RENDER_LEVELS if isinstance(SPHERE_SUBSURF_RENDER_LEVELS, int) else SPHERE_SUBSURF_LEVELS
+    
     # Create materials
     cube_material = create_metallic_material("Cube_Material", CUBE_COLOR)
     tetrahedron_material = create_crystalline_material("Tetrahedron_Material", TETRAHEDRON_COLOR)
@@ -394,8 +549,12 @@ def create_studio_geometric_shapes():
     # Setup lighting
     setup_studio_lighting()
     
-    # Setup multiple dramatic cameras
-    setup_cameras()
+    # Setup multiple dramatic cameras using parameterized choices
+    setup_cameras({
+        "tetrahedron": tetrahedron,
+        "cube": cube,
+        "sphere": sphere,
+    })
     
     # Enable shadows for all lights
     for light in bpy.data.lights:
